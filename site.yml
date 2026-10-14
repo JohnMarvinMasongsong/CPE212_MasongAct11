@@ -1,0 +1,148 @@
+---
+- name: Install Docker and deploy the containerized application
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Install Ubuntu prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Create Docker keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+      when: ansible_os_family == "Debian"
+
+    - name: Download Docker signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+      when: ansible_os_family == "Debian"
+
+    - name: Add Docker repository on Ubuntu
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ 'amd64' if ansible_architecture == 'x86_64'
+          else 'arm64' }} signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/ubuntu
+          {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install Docker packages on Ubuntu
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+      when: ansible_os_family == "Debian"
+
+    - name: Install CentOS prerequisites
+      ansible.builtin.dnf:
+        name:
+          - dnf-plugins-core
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Add Docker repository on CentOS
+      ansible.builtin.command:
+        cmd: dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+        creates: /etc/yum.repos.d/docker-ce.repo
+      when: ansible_os_family == "RedHat"
+
+    - name: Install Docker packages on CentOS
+      ansible.builtin.dnf:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Enable and start Docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Enable Docker socket
+      ansible.builtin.systemd:
+        name: docker.socket
+        enabled: true
+        state: started
+
+    - name: Add SSH user to Docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+      when: ansible_user is defined
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: /opt/cpe212-masongact11
+        state: directory
+        mode: "0755"
+
+    - name: Copy Dockerfile
+      ansible.builtin.copy:
+        src: Dockerfile
+        dest: /opt/cpe212-masongact11/Dockerfile
+        mode: "0644"
+
+    - name: Copy website HTML
+      ansible.builtin.copy:
+        src: index.html
+        dest: /opt/cpe212-masongact11/index.html
+        mode: "0644"
+
+    - name: Copy Supervisor configuration
+      ansible.builtin.copy:
+        src: supervisord.conf
+        dest: /opt/cpe212-masongact11/supervisord.conf
+        mode: "0644"
+
+    - name: Build Docker image
+      ansible.builtin.command:
+        cmd: docker build -t cpe212-masongact11:latest /opt/cpe212-masongact11
+      register: docker_build
+      changed_when: true
+
+    - name: Remove existing application container
+      ansible.builtin.command:
+        cmd: docker rm -f cpe212-activity11
+      register: container_removal
+      failed_when: false
+      changed_when: container_removal.rc == 0
+
+    - name: Run application container
+      ansible.builtin.command:
+        cmd: >-
+          docker run -d
+          --name cpe212-activity11
+          --restart unless-stopped
+          -p 8080:80
+          -p 3307:3306
+          cpe212-masongact11:latest
+      register: container_run
+      changed_when: true
+
+    - name: Display deployment result
+      ansible.builtin.debug:
+        msg: "Container deployment completed on {{ inventory_hostname }}."
